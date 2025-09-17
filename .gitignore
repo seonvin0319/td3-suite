@@ -1,3 +1,7 @@
 results/
 models/
 wandb/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

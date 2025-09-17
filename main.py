@@ -44,7 +44,7 @@ if __name__ == "__main__":
     # Experiment
     parser.add_argument("--policy",
                         default="TD3_BC",
-                        choices=["TD3_BC", "TD3_GFlow_BC", "SAC_W2", "GFlow_FR"])
+                        choices=["TD3_BC", "TD3_GFlow_BC", "SAC_W2", "GFlow_FR", "GFlow_KL"])
     parser.add_argument("--env", default="hopper-medium-v2")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval_freq", type=int, default=5_000)
@@ -193,6 +193,12 @@ if __name__ == "__main__":
         #     alpha=args.alpha
         # )
 
+    elif args.policy == "GFlow_KL":
+        from agent_gflow_kl import TD3_GFlow_KL_Agent
+        kwargs.update({"kl_weight": args.w2_weight,
+                       "entropy_weight": args.entropy_weight})
+        policy = TD3_GFlow_KL_Agent(**kwargs)
+
     else:
         raise NotImplementedError(f"Unknown policy: {args.policy}")
 
@@ -213,10 +219,16 @@ if __name__ == "__main__":
     # ---------------- Train Loop ----------------
     evaluations = []
     for t in range(int(args.max_timesteps)):
-        metrics = policy.train(replay_buffer, args.batch_size)
+        #---------------------
+        # decaying w2 weight
+        #---------------------
+        decayed_w2 = args.w2_weight * np.exp(-t-1 / 100_000)
+        policy.w2_weight = decayed_w2
 
+        metrics = policy.train(replay_buffer, args.batch_size)
+        # ------------------------------
         if args.wandb:
-            log_data = {"timesteps": t + 1}
+            log_data = {"timesteps": t + 1, "schedule/w2_weight": decayed_w2}
 
             # 공통
             for k in ["critic_loss", "actor_loss", "behavior_loss"]:
