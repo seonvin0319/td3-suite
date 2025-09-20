@@ -1,0 +1,64 @@
+program: main.py
+project: gflow_offRL
+entity: seonvin0319
+method: bayes
+metric: {name: final/eval_mean, goal: maximize}   # 최종 평균 기준 최적화
+parameters:
+  policy:        {value: GFlow_W2}
+  wandb:         {value: true}
+  normalize:     {value: true}
+  save_model:    {value: false}
+  max_timesteps: {value: 500000}
+  eval_freq:     {value: 10000}
+  alpha:         {value: 1.0}          # 고정
+  env:           {values: [hopper-medium-v2]}
+  seed:          {values: [0, 1, 2]}
+
+  # 튜닝 핵심
+  w2_weight:
+    distribution: log_uniform_values
+    values: [0.05, 3.0]
+  entropy_weight:
+    values: [0.0, 0.005, 0.01]
+
+  # 학습 설정(선택)
+  batch_size:    {values: [256, 512]}
+  policy_freq:   {values: 1}
+
+  # 최종 평가 반복 수 (빠르게 바꾸고 싶으면 여기서 제어)
+  final_eval_runs:      {value: 5}
+  final_eval_episodes:  {value: 10}
+
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - --wandb
+  - --policy
+  - ${policy}
+  - --env
+  - ${env}
+  - --seed
+  - ${seed}
+  - --max_timesteps
+  - ${max_timesteps}
+  - --eval_freq
+  - ${eval_freq}
+  - --normalize
+  - ${normalize}
+  - --save_model
+  - ${save_model}
+  - --alpha
+  - ${alpha}
+  - --w2_weight
+  - ${w2_weight}
+  - --entropy_weight
+  - ${entropy_weight}
+  - --batch_size
+  - ${batch_size}
+  - --policy_freq
+  - ${policy_freq}
+  - --final_eval_runs
+  - ${final_eval_runs}
+  - --final_eval_episodes
+  - ${final_eval_episodes}

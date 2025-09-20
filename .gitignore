@@ -1,6 +1,9 @@
 results/
+results_draft/
 models/
+models_draft/
 wandb/
+wandb_draft/
 __pycache__/
 *.pyc
 *.pyo

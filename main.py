@@ -44,7 +44,7 @@ if __name__ == "__main__":
     # Experiment
     parser.add_argument("--policy",
                         default="TD3_BC",
-                        choices=["TD3_BC", "TD3_GFlow_BC", "SAC_W2", "GFlow_FR", "GFlow_KL"])
+                        choices=["TD3_BC", "GFlow_W2","TD3_GFlow_BC", "SAC_W2", "GFlow_FR", "GFlow_KL"])
     parser.add_argument("--env", default="hopper-medium-v2")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval_freq", type=int, default=5_000)
@@ -62,27 +62,16 @@ if __name__ == "__main__":
     parser.add_argument("--policy_freq", type=int, default=1)
 
     # TD3+BC / GFlow(Baseline)
-    parser.add_argument("--alpha", type=float, default=2.5)
+    parser.add_argument("--alpha", type=float, default=1.0)
     parser.add_argument("--entropy_weight", type=float, default=0.01)
     parser.add_argument("--w2_weight", type=float, default=0.5)
 
-    # SAC_W2 전용
-    parser.add_argument("--temperature", type=float, default=0.2,
-                        help="initial alpha (log_alpha exp) for SAC_W2")
-    parser.add_argument("--autotune_alpha", action="store_true",
-                        help="enable alpha auto-tuning in SAC_W2")
-    parser.add_argument("--target_entropy", type=float, default=None,
-                        help="SAC target entropy (default: -action_dim)")
-
-    # GFlow_FR 전용
-    parser.add_argument("--fr_weight", type=float, default=0.1,
-                        help="Fisher-Rao distance weight for GFlow_FR")
-    parser.add_argument("--fr_beta", type=float, default=0.5,
-                        help="Fisher-Rao distance weight for GFlow_FR")
+    parser.add_argument("--final_eval_runs", type=int, default=5)
+    parser.add_argument("--final_eval_episodes", type=int, default=10)
 
     # W&B
     parser.add_argument("--wandb", action="store_true")
-    parser.add_argument("--wandb_project", default="td3-suite")
+    parser.add_argument("--wandb_project", default="gflow_offRL")
     parser.add_argument("--wandb_entity", default=None)
     parser.add_argument("--run_name", default="")
     args = parser.parse_args()
@@ -109,6 +98,13 @@ if __name__ == "__main__":
         if args.wandb_entity:
             init_kwargs["entity"] = args.wandb_entity
         run = wandb.init(**init_kwargs)
+        wandb.log({"_boot": 1, "timesteps": 0}, step=0)
+
+    if args.wandb and wandb is not None and wandb.run is not None:
+        # wandb.config에 정의된 sweep 파라미터가 있으면 args에 덮어쓰기
+        for k, v in dict(wandb.config).items():
+            if hasattr(args, k):
+                setattr(args, k, v)
 
     env = gym.make(args.env)
 
@@ -140,64 +136,20 @@ if __name__ == "__main__":
         from agent import TD3_BC
         policy = TD3_BC(**kwargs)
 
-    elif args.policy == "TD3_GFlow_BC":
-        # W2 + entropy를 쓰는 gradient-flow TD3 변형 (기존)
-        from agent_gflow import TD3_GFlow_BC
-        kwargs.update({"w2_weight": args.w2_weight,
-                       "entropy_weight": args.entropy_weight})
-        policy = TD3_GFlow_BC(**kwargs)
-
-    elif args.policy == "SAC_W2":
-        # SAC 스타일 + W2
-        from agent_sac_w2 import SAC_W2_Agent
-        policy = SAC_W2_Agent(
+    elif args.policy == "GFlow_W2":
+        # 진짜 W2 에이전트 사용 (agent_gflow_w2.py)
+        from agent_gflow import GFlow_W2
+        policy = GFlow_W2(
             state_dim=state_dim,
             action_dim=action_dim,
             max_action=max_action,
             discount=args.discount,
             tau=args.tau,
-            policy_freq=1,                      # SAC는 매 스텝 업데이트 권장
-            w2_weight=args.w2_weight,
-            alpha_init=args.temperature,
-            autotune_alpha=args.autotune_alpha,
-            target_entropy=args.target_entropy
-        )
-
-    elif args.policy == "GFlow_FR":
-        # TD3 스타일 + Fisher-Rao 정규화
-        from agent_gflow_fr import TD3_GFlow_FR_Agent
-        policy = TD3_GFlow_FR_Agent(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            max_action=max_action,
-            discount=args.discount,
-            tau=args.tau,
-            policy_noise=args.policy_noise * max_action,
-            noise_clip=args.noise_clip * max_action,
             policy_freq=args.policy_freq,
-            alpha=args.alpha,
-            fr_weight=args.fr_weight,
-            entropy_weight=args.entropy_weight
+            alpha=1.0,                      # alpha=1 고정 스윕도 가능
+            w2_weight=args.w2_weight,
+            entropy_weight=args.entropy_weight,
         )
-
-        # from agent_gflow_fr import TD3_GFlow_BC_FRKernel_Agent
-        # policy = TD3_GFlow_BC_FRKernel_Agent(
-        #     state_dim=state_dim,
-        #     action_dim=action_dim,
-        #     max_action=max_action,
-        #     discount=args.discount,
-        #     tau=args.tau,
-        #     policy_noise=args.policy_noise * max_action,
-        #     noise_clip=args.noise_clip * max_action,
-        #     policy_freq=args.policy_freq,
-        #     alpha=args.alpha
-        # )
-
-    elif args.policy == "GFlow_KL":
-        from agent_gflow_kl import TD3_GFlow_KL_Agent
-        kwargs.update({"kl_weight": args.w2_weight,
-                       "entropy_weight": args.entropy_weight})
-        policy = TD3_GFlow_KL_Agent(**kwargs)
 
     else:
         raise NotImplementedError(f"Unknown policy: {args.policy}")
@@ -218,39 +170,23 @@ if __name__ == "__main__":
 
     # ---------------- Train Loop ----------------
     evaluations = []
+    best_eval = -np.inf
     for t in range(int(args.max_timesteps)):
-        #---------------------
-        # decaying w2 weight
-        #---------------------
-        decayed_w2 = args.w2_weight * np.exp(-t-1 / 100_000)
-        policy.w2_weight = decayed_w2
 
         metrics = policy.train(replay_buffer, args.batch_size)
         # ------------------------------
         if args.wandb:
-            log_data = {"timesteps": t + 1, "schedule/w2_weight": decayed_w2}
+            log_data = {"timesteps": t + 1}
 
-            # 공통
             for k in ["critic_loss", "actor_loss", "behavior_loss"]:
                 if k in metrics:
                     name = "train/behavior_nll" if k == "behavior_loss" else f"train/{k}"
                     log_data[name] = metrics[k]
 
-            # TD3_GFlow_BC / GFlow_FR 특화
+            # TD3_GFlow_BC
             for k in ["lambda", "Q_mean", "w2_distance", "fr_distance", "entropy"]:
                 if k in metrics:
                     log_data[f"train/{k}"] = metrics[k]
-
-            # SAC_W2 특화
-            for k_src, k_dst in [
-                ("alpha", "alpha"),
-                ("alpha_loss", "alpha_loss"),
-                ("policy_logp", "policy_logp"),
-                ("Q_pi_mean", "Q_pi_mean"),
-                ("w2_distance", "w2_distance"),
-            ]:
-                if k_src in metrics:
-                    log_data[f"train/{k_dst}"] = metrics[k_src]
 
             wandb.log(log_data, step=t + 1)
 
@@ -265,6 +201,29 @@ if __name__ == "__main__":
                 wandb.log({"eval/d4rl": d4rl_score, "timesteps": t + 1}, step=t + 1)
             if args.save_model:
                 policy.save(f"./models/{file_name}")
+                if d4rl_score > best_eval:
+                    best_eval = d4rl_score
+                    policy.save(f"./models/{file_name}_best")
 
-    if args.wandb:
+    # -------- Final evaluation on the trained weights --------
+    print("======== Final Evaluation (trained weights) ========")
+    final_scores = []
+    for r in range(args.final_eval_runs):
+        score = eval_policy(
+            policy, args.env, args.seed, mean, std,
+            seed_offset=1000 + 100 * r,            # 평가 난수 고정용 오프셋
+            eval_episodes=args.final_eval_episodes
+        )
+        final_scores.append(score)
+    final_scores = np.array(final_scores, dtype=np.float32)
+    final_mean, final_std = float(final_scores.mean()), float(final_scores.std())
+    print(f"[FINAL] mean={final_mean:.3f}, std={final_std:.3f} "
+          f"over {args.final_eval_runs}x{args.final_eval_episodes} episodes")
+    if wandb and args.wandb:
+        wandb.log({
+            "final/eval_mean": final_mean,
+            "final/eval_std": final_std,
+            "final/runs": args.final_eval_runs,
+            "final/episodes": args.final_eval_episodes
+        })
         wandb.finish()

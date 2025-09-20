@@ -20,7 +20,7 @@ class BehaviorPolicy(nn.Module):
     def forward(self, state):
         x = F.relu(self.l1(state))
         x = F.relu(self.l2(x))
-        mean = self.mean_head(x)
+        mean = torch.tanh(self.mean_head(x))
         log_std = self.log_std_head(x).clamp(-5, 2)
         return mean, log_std
 
@@ -68,7 +68,7 @@ class Critic(nn.Module):
         q1 = F.relu(self.l1(sa)); q1 = F.relu(self.l2(q1)); q1 = self.l3(q1)
         return q1
 
-class TD3_GFlow_BC:
+class GFlow_W2:
     """
     TD3+BC를 gradient flow 관점으로 확장:
       - BehaviorPolicy(가우시안) 회귀
