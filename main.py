@@ -137,7 +137,6 @@ if __name__ == "__main__":
         policy = TD3_BC(**kwargs)
 
     elif args.policy == "GFlow_W2":
-        # 진짜 W2 에이전트 사용 (agent_gflow_w2.py)
         from agent_gflow import GFlow_W2
         policy = GFlow_W2(
             state_dim=state_dim,
@@ -164,7 +163,6 @@ if __name__ == "__main__":
     if args.normalize:
         mean, std = replay_buffer.normalize_states()
     else:
-        # broadcast 되도록 스칼라 대신 shape 맞춰줌
         mean = np.zeros((1, state_dim), dtype=np.float32)
         std = np.ones((1, state_dim), dtype=np.float32)
 
