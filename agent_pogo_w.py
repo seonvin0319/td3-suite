@@ -1,5 +1,3 @@
-# File: td3_suite/td3w/agent_gflow.py
-
 import copy
 import numpy as np
 import torch
@@ -21,6 +19,7 @@ class BehaviorPolicy(nn.Module):
     def forward(self, state):
         x = F.relu(self.l1(state))
         x = F.relu(self.l2(x))
+        x = F.relu(self.l3(x))
         mean = torch.tanh(self.mean_head(x))
         log_std = self.log_std_head(x).clamp(-5, 2)
         return mean, log_std
@@ -114,12 +113,13 @@ class POGO_W:
         tau=0.005,
         policy_noise=0.2,
         noise_clip=0.5,
-        policy_freq=1,
+        policy_freq=2,
         # beta_bc=2.5,        # β1: Actor-BC 가중
         beta_target=0.01,    # β2: Critic 타깃 페널티 가중
         w2_weight=1.0,
         entropy_weight=0.01,
         learning_rate=0.001,
+        use_natgrad=True,
     ):
         self.actor = ActorGaussian(state_dim, action_dim, max_action).to(device)
         self.actor_target = copy.deepcopy(self.actor)
@@ -142,6 +142,7 @@ class POGO_W:
         self.beta_target = beta_target
         self.w2_weight = w2_weight
         self.entropy_weight = entropy_weight
+        self.use_natgrad = use_natgrad
         self.total_it = 0
 
     @torch.no_grad()
@@ -196,7 +197,20 @@ class POGO_W:
 
             actor_loss = self.w2_weight * w2 - lmbda * Q.mean() - self.entropy_weight * entropy
 
-            self.actor_optimizer.zero_grad(); actor_loss.backward(); self.actor_optimizer.step()
+            self.actor_optimizer.zero_grad()
+
+            handles = []
+            # ===== Natural Gradient (output-hook) =====
+            if self.use_natgrad:
+                h = log_std_a.register_hook(lambda g: g * 0.5)  # G_{ρρ}^{-1} = 0.5 I
+            else:
+                h = None
+
+            actor_loss.backward()
+            if h is not None:
+                h.remove()
+
+            self.actor_optimizer.step()
 
             # target soft-update
             for p, tp in zip(self.critic.parameters(), self.critic_target.parameters()):
