@@ -68,6 +68,7 @@ if __name__ == "__main__":
     parser.add_argument("--entropy_weight", type=float, default=0.01)
     parser.add_argument("--beta_bc", type=float, default=0.01)
     parser.add_argument("--beta_target", type=float, default=0.01)
+    parser.add_argument("--use_natgrad", default=True, type=bool)
 
     parser.add_argument("--final_eval_runs", type=int, default=5)
     parser.add_argument("--final_eval_episodes", type=int, default=10)
@@ -153,6 +154,7 @@ if __name__ == "__main__":
             w2_weight=args.beta_bc,
             beta_target=args.beta_target,
             entropy_weight=args.entropy_weight,
+            use_natgrad=args.use_natgrad
         )
 
     elif args.policy == "POGO_FR":
